@@ -1,0 +1,22 @@
+{
+  "active_rect": { "x": 0.60, "y": 0.60, "w": 0.35, "h": 0.35 },
+
+  "tor": {
+    "center_px": { "x": 0.82, "y": 0.74 },
+    "outer_r": 0.48,
+    "blue_end_r": 0.36,
+    "trigger_end_r": 0.30,
+    "inner_hole_r": 0.22
+  },
+
+  "groups": {
+    "radial_offsets": [0.02, 0.05, 0.08],
+    "pixels_per_group": 7
+  },
+
+  "colors": {
+    "dark_threshold_v": 80,
+    "blue_h_min": 90,
+    "blue_h_max": 120
+  }
+}
