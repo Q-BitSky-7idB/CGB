@@ -1,146 +1,108 @@
 ﻿import json, time, os
-from ctypes import Structure, c_ulong, c_ushort, POINTER, windll
 import win32api, win32con
-import mss
+from ctypes import Structure, c_ulong, POINTER, windll
+import mss, cv2, keyboard
 import numpy as np
-import cv2
-import keyboard
 
-# ===================== WinAPI CLICK =====================
+# ================= CLICK =================
 PUL = POINTER(c_ulong)
 
 class MOUSEINPUT(Structure):
-    _fields_ = [
-        ("dx", c_ulong), ("dy", c_ulong),
-        ("mouseData", c_ulong),
-        ("dwFlags", c_ulong),
-        ("time", c_ulong),
-        ("dwExtraInfo", PUL)
-    ]
-
+    _fields_=[("dx",c_ulong),("dy",c_ulong),("mouseData",c_ulong),
+              ("dwFlags",c_ulong),("time",c_ulong),("dwExtraInfo",PUL)]
 class INPUT(Structure):
-    _fields_ = [("type", c_ulong), ("mi", MOUSEINPUT)]
+    _fields_=[("type",c_ulong),("mi",MOUSEINPUT)]
 
 def click_fast():
-    down = INPUT(0, MOUSEINPUT(0,0,0,win32con.MOUSEEVENTF_LEFTDOWN,0,None))
-    up   = INPUT(0, MOUSEINPUT(0,0,0,win32con.MOUSEEVENTF_LEFTUP,0,None))
-    windll.user32.SendInput(1, down, 40)
-    windll.user32.SendInput(1, up, 40)
+    windll.user32.SendInput(1, INPUT(0,MOUSEINPUT(0,0,0,2,0,None)), 40)
+    windll.user32.SendInput(1, INPUT(0,MOUSEINPUT(0,0,0,4,0,None)), 40)
 
 def press_space():
-    windll.user32.keybd_event(0x20, 0, 0, 0)
-    windll.user32.keybd_event(0x20, 0, win32con.KEYEVENTF_KEYUP, 0)
+    windll.user32.keybd_event(0x20,0,0,0)
+    windll.user32.keybd_event(0x20,0,2,0)
 
-# ===================== FSM =====================
+# ================= FSM =================
 class FSM:
-    def __init__(self):
-        self.state = 0
-
-    def reset(self):
-        self.state = 0
-
-    def update(self, hits):
-        if self.state == 0 and hits[0]:
-            self.state = 1
-        elif self.state == 1 and hits[1]:
-            self.state = 2
-        elif self.state == 2 and hits[2]:
-            self.reset()
-            return True
-        elif self.state > 0 and not hits[self.state-1]:
-            self.reset()
+    def __init__(self): self.s=0
+    def reset(self): self.s=0
+    def step(self,h):
+        if self.s==0 and h[0]: self.s=1
+        elif self.s==1 and h[1]: self.s=2
+        elif self.s==2 and h[2]: self.reset(); return True
+        elif self.s>0 and not h[self.s-1]: self.reset()
         return False
 
-# ===================== GEOMETRY =====================
-class Geometry:
-    def __init__(self, cfg):
-        self.cfg = cfg
-        self.update()
-
-    def update(self):
-        sw, sh = win32api.GetSystemMetrics(0), win32api.GetSystemMetrics(1)
-        ar = self.cfg["active_rect"]
-
-        self.ax = int(ar["x"] * sw)
-        self.ay = int(ar["y"] * sh)
-        self.aw = int(ar["w"] * sw)
-        self.ah = int(ar["h"] * sh)
-
-        t = self.cfg["tor"]
-        self.cx = int(self.aw * t["center_px"]["x"])
-        self.cy = int(self.ah * t["center_px"]["y"])
-
-        base = min(self.aw, self.ah)
-        self.outer_r = int(base * t["outer_r"])
-        self.blue_end_r = int(base * t["blue_end_r"])
-        self.trigger_end_r = int(base * t["trigger_end_r"])
-        self.inner_r = int(base * t["inner_hole_r"])
-
-        # build LOCAL pixel groups
-        self.groups = []
-        for off in self.cfg["groups"]["radial_offsets"]:
-            r = int(self.blue_end_r - off * base)
-            pts = []
-            for i in range(self.cfg["groups"]["pixels_per_group"]):
-                x = self.cx
-                y = self.cy + r + i
-                if 0 <= x < self.aw and 0 <= y < self.ah:
-                    pts.append((x,y))
-            self.groups.append(pts)
-
-# ===================== COLOR =====================
-def pixel_hit(bgr, cfg):
-    v = cv2.cvtColor(np.uint8([[bgr]]), cv2.COLOR_BGR2HSV)[0][0][2]
-    return v > cfg["colors"]["dark_threshold_v"]
-
-# ===================== MAIN =====================
+# ================= MAIN =================
 def main():
-    cfg = json.load(open("config.json"))
-    geom = Geometry(cfg)
-    fsm = FSM()
-    test_mode = False
+    cfg=json.load(open("config.json"))
+    fsm=FSM()
+    test=False
+    mode="CONFIG"
+
+    sw,sh=win32api.GetSystemMetrics(0),win32api.GetSystemMetrics(1)
 
     with mss.mss() as sct:
+        cv2.namedWindow("overlay", cv2.WND_PROP_FULLSCREEN)
+        cv2.setWindowProperty("overlay", cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+
         while True:
-            mon = {
-                "left": geom.ax,
-                "top": geom.ay,
-                "width": geom.aw,
-                "height": geom.ah
-            }
-            img = np.array(sct.grab(mon))[:,:,:3]
+            ar=cfg["active_rect"]
+            ax=int(ar["x"]*sw); ay=int(ar["y"]*sh)
+            aw=int(ar["w"]*sw); ah=int(ar["h"]*sh)
 
-            # overlay
-            vis = img.copy()
-            for g in geom.groups:
-                for x,y in g:
-                    cv2.circle(vis,(x,y),2,(0,255,255),-1)
+            base=min(aw,ah)
+            tor=cfg["tor"]
+            cx=ax+int(aw*tor["center_px"]["x"])
+            cy=ay+int(ah*tor["center_px"]["y"])
 
-            cv2.imshow("overlay", vis)
+            overlay=np.zeros((sh,sw,3),np.uint8)
+
+            # active rect
+            cv2.rectangle(overlay,(ax,ay),(ax+aw,ay+ah),(0,255,255),1)
+
+            # rings
+            for r,c in [
+                (tor["outer_r"],(255,255,255)),
+                (tor["blue_end_r"],(255,200,0)),
+                (tor["trigger_end_r"],(0,255,0)),
+                (tor["inner_hole_r"],(0,0,255))
+            ]:
+                cv2.circle(overlay,(cx,cy),int(base*r),c,1)
+
+            # groups
+            for gi,off in enumerate(cfg["groups"]["radial_offsets"]):
+                rr=int(base*(tor["blue_end_r"]-off))
+                for i in range(cfg["groups"]["pixels_per_group"]):
+                    cv2.circle(overlay,(cx,cy+rr+i),2,(0,255-gi*60,255),-1)
+
+            cv2.putText(overlay,f"MODE: {mode}",(30,40),
+                        cv2.FONT_HERSHEY_SIMPLEX,1,(255,255,255),2)
+
+            cv2.imshow("overlay",overlay)
             cv2.waitKey(1)
 
-            hits = []
-            for grp in geom.groups:
-                hit = False
-                for x,y in grp:
-                    if pixel_hit(img[y,x], cfg):
-                        hit = True
-                        break
-                hits.append(hit)
+            # controls
+            if keyboard.is_pressed("left"):  ar["x"]-=0.001
+            if keyboard.is_pressed("right"): ar["x"]+=0.001
+            if keyboard.is_pressed("up"):    ar["y"]-=0.001
+            if keyboard.is_pressed("down"):  ar["y"]+=0.001
+            if keyboard.is_pressed("+"): ar["w"]+=0.001; ar["h"]+=0.001
+            if keyboard.is_pressed("-"): ar["w"]-=0.001; ar["h"]-=0.001
 
-            if fsm.update(hits):
-                press_space() if test_mode else click_fast()
+            if keyboard.is_pressed("enter"):
+                mode="MONITOR" if mode=="CONFIG" else "CONFIG"
+                time.sleep(0.3)
 
             if keyboard.is_pressed("1"):
-                test_mode = not test_mode
-                time.sleep(0.3)
+                test=not test; time.sleep(0.3)
 
             if keyboard.is_pressed("pause"):
                 break
 
-            time.sleep(0.001)
+            time.sleep(0.01)
 
     cv2.destroyAllWindows()
+    json.dump(cfg,open("config.json","w"),indent=2)
 
-if __name__ == "__main__":
+if __name__=="__main__":
     main()
