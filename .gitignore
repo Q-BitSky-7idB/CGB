@@ -208,3 +208,6 @@ __marimo__/
 
 _raw.txt
 *.lnk
+
+docs/*.mp4
+docs/vlcsnap*.png
